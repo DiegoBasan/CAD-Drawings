@@ -43,7 +43,12 @@ Separación clave (igual que el proyecto de referencia): `occ/` no sabe nada de 
 
 ### Nota sobre el WASM de OpenCASCADE
 
-El binario `opencascade.wasm.wasm` (~63 MB) vive en `app/public/` y se sirve mismo-origen en `/opencascade.wasm.wasm` — `occ/init.ts` se lo indica al loader de Emscripten vía `locateFile`. Se intentó servirlo desde un CDN (jsdelivr) para no inflar el repo, pero jsdelivr aplica un límite de tamaño de archivo por debajo de 63 MB y responde 403 para este archivo (confirmado con la pestaña Network: `cf-cache-status: HIT`, `content-type: text/plain`, body de ~49 bytes) — no es viable para un binario de este tamaño. Servirlo mismo-origen evita cualquier dependencia de red externa y funciona igual en local, en build de producción y en entornos como StackBlitz (que sí clonan el repo completo). `vite.config.ts` además excluye `opencascade.js` del pre-bundling de dependencias (`optimizeDeps.exclude`), porque esbuild puede reescribir el código glue de Emscripten en dev de una forma que rompe la detección de `locateFile`.
+El binario `opencascade.wasm.wasm` (~63 MB) se sirve mismo-origen en `/opencascade.wasm.wasm` — `occ/init.ts` se lo indica al loader de Emscripten vía `locateFile`. **No está commiteado al repo**: `scripts/copy-wasm.mjs` lo copia a `app/public/` automáticamente vía `postinstall` justo después de `npm install` (desde `node_modules/opencascade.js/dist/opencascade.wasm.wasm`). Se probaron dos alternativas que fallaron antes de llegar a esto:
+
+- Un CDN (jsdelivr): aplica un límite de tamaño de archivo por debajo de 63 MB y responde 403 para este binario (confirmado con la pestaña Network: `cf-cache-status: HIT`, `content-type: text/plain`, body de ~49 bytes).
+- Commitear el binario directo en `app/public/`: git/GitHub avisan que supera su tamaño recomendado (50 MB), y herramientas que importan/clonan el repo (StackBlitz incluido) pueden truncarlo o devolver una página de error en su lugar — eso produce exactamente el síntoma visto (`WebAssembly.instantiate(): expected magic word... found File`, es decir el `fetch()` recibió texto de error en vez del binario real).
+
+Regenerarlo en `postinstall` evita ambos problemas: nunca viaja por git, así que no hay nada que un import/clone pueda truncar. `vite.config.ts` además excluye `opencascade.js` del pre-bundling de dependencias (`optimizeDeps.exclude`), porque esbuild puede reescribir el código glue de Emscripten en dev de una forma que rompe la detección de `locateFile`.
 
 ## Desarrollo
 
