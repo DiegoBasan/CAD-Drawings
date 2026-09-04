@@ -40,7 +40,7 @@ function tessellateBody(oc: any, shape: any): PartGeometry | null {
   while (explorer.More()) {
     const face = oc.TopoDS.Face_1(explorer.Current());
     const location = new oc.TopLoc_Location_1();
-    const triHandle = oc.BRep_Tool.Triangulation(face, location, 0);
+    const triHandle = oc.BRep_Tool.Triangulation(face, location);
     const tri = triHandle?.get ? triHandle.get() : triHandle;
 
     if (tri && !tri.IsNull?.()) {
