@@ -13,24 +13,29 @@ export default function App() {
       <Toolbar />
       <div className="flex flex-1 min-h-0">
         <aside className="w-72 flex flex-col border-r border-neutral-800 bg-neutral-900">
-          {tab === "3d" ? (
-            <>
-              <h2 className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500">
-                Piezas
-              </h2>
-              <PartsPanel />
-            </>
-          ) : (
-            <>
-              <h2 className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500">
-                Vista seleccionada
-              </h2>
-              <ViewInspector />
-            </>
-          )}
+          {/* Both panels stay mounted so switching tabs never tears down
+              the three.js scene/WebGL context (which was wiping the 3D
+              view and breaking navigation on return). */}
+          <div className={tab === "3d" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
+            <h2 className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500">
+              Piezas
+            </h2>
+            <PartsPanel />
+          </div>
+          <div className={tab === "2d" ? "flex flex-col flex-1 min-h-0" : "hidden"}>
+            <h2 className="px-3 py-2 text-xs uppercase tracking-wide text-neutral-500">
+              Vista seleccionada
+            </h2>
+            <ViewInspector />
+          </div>
         </aside>
-        <main className="flex-1 min-w-0">
-          {tab === "3d" ? <Viewport /> : <DrawingCanvas />}
+        <main className="flex-1 min-w-0 relative">
+          <div className={tab === "3d" ? "absolute inset-0" : "hidden"}>
+            <Viewport />
+          </div>
+          <div className={tab === "2d" ? "absolute inset-0" : "hidden"}>
+            <DrawingCanvas />
+          </div>
         </main>
       </div>
     </div>

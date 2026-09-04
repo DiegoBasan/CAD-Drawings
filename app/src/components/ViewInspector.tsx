@@ -1,14 +1,20 @@
 import { useAssemblyStore } from "../assembly/store";
+import { SCALE_OPTIONS } from "../scene/paper";
+import { VIEW_PRESET_LABEL } from "../scene/viewPresets";
+import ViewPresetIcon from "./ViewPresetIcon";
 import type { RenderMode, ViewPreset } from "../types/domain";
 
-const VIEW_PRESETS: { id: ViewPreset; label: string }[] = [
-  { id: "iso", label: "Isometrica" },
-  { id: "front", label: "Frontal" },
-  { id: "back", label: "Posterior" },
-  { id: "left", label: "Izquierda" },
-  { id: "right", label: "Derecha" },
-  { id: "top", label: "Superior" },
-  { id: "bottom", label: "Inferior" },
+const VIEW_PRESETS: ViewPreset[] = [
+  "front",
+  "right",
+  "left",
+  "back",
+  "top",
+  "bottom",
+  "isoTopA",
+  "isoTopB",
+  "isoBottomA",
+  "isoBottomB",
 ];
 
 const RENDER_MODES: { id: RenderMode; label: string }[] = [
@@ -26,9 +32,11 @@ export default function ViewInspector() {
   const partOrder = useAssemblyStore((s) => s.partOrder);
   const updateView = useAssemblyStore((s) => s.updateView);
   const setViewPartState = useAssemblyStore((s) => s.setViewPartState);
-  const arrowToolActive = useAssemblyStore((s) => s.arrowToolActive);
-  const setArrowToolActive = useAssemblyStore((s) => s.setArrowToolActive);
-  const deleteArrowFromView = useAssemblyStore((s) => s.deleteArrowFromView);
+  const penToolActive = useAssemblyStore((s) => s.penToolActive);
+  const setPenToolActive = useAssemblyStore((s) => s.setPenToolActive);
+  const penStyle = useAssemblyStore((s) => s.penStyle);
+  const setPenStyle = useAssemblyStore((s) => s.setPenStyle);
+  const deleteAnnotation = useAssemblyStore((s) => s.deleteAnnotation);
 
   const sheet = currentSheetId ? sheets[currentSheetId] : null;
   const view = sheet?.views.find((v) => v.id === activeViewId) ?? null;
@@ -36,8 +44,8 @@ export default function ViewInspector() {
   if (!sheet || !view) {
     return (
       <div className="p-3 text-neutral-500 text-xs">
-        Selecciona una vista en el canvas para editar su direccion, modo de
-        render, flechas y colores de contorno.
+        Selecciona una vista en el canvas para editar su direccion, escala,
+        modo de render, anotaciones y colores de contorno.
       </div>
     );
   }
@@ -49,20 +57,36 @@ export default function ViewInspector() {
         <div className="flex flex-wrap gap-1">
           {VIEW_PRESETS.map((v) => (
             <button
-              key={v.id}
-              onClick={() =>
-                updateView(sheet.id, view.id, { viewPreset: v.id })
-              }
-              className={`px-2 py-1 rounded text-xs ${
-                view.viewPreset === v.id
+              key={v}
+              onClick={() => updateView(sheet.id, view.id, { viewPreset: v })}
+              title={VIEW_PRESET_LABEL[v]}
+              className={`p-1 rounded ${
+                view.viewPreset === v
                   ? "bg-blue-600"
                   : "bg-neutral-800 hover:bg-neutral-700"
               }`}
             >
-              {v.label}
+              <ViewPresetIcon preset={v} />
             </button>
           ))}
         </div>
+      </div>
+
+      <div className="p-2 border-b border-neutral-800">
+        <div className="text-neutral-400 text-xs mb-1">Escala</div>
+        <select
+          className="w-full bg-neutral-800 text-xs rounded px-2 py-1"
+          value={view.scale}
+          onChange={(e) =>
+            updateView(sheet.id, view.id, { scale: Number(e.target.value) })
+          }
+        >
+          {SCALE_OPTIONS.map((opt) => (
+            <option key={opt.label} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
       </div>
 
       <div className="p-2 border-b border-neutral-800">
@@ -87,30 +111,70 @@ export default function ViewInspector() {
       </div>
 
       <div className="p-2 border-b border-neutral-800">
+        <div className="text-neutral-400 text-xs mb-1">Pluma (anotaciones)</div>
         <button
-          className={`w-full px-2 py-1 rounded text-xs ${
-            arrowToolActive
+          className={`w-full px-2 py-1 rounded text-xs mb-2 ${
+            penToolActive
               ? "bg-rose-600 hover:bg-rose-500"
               : "bg-neutral-800 hover:bg-neutral-700"
           }`}
-          onClick={() => setArrowToolActive(!arrowToolActive)}
+          onClick={() => setPenToolActive(!penToolActive)}
         >
-          {arrowToolActive
-            ? "Haz clic en el origen y luego el destino..."
-            : "+ Agregar flecha (click, click)"}
+          {penToolActive
+            ? "Dibujando: clic para agregar puntos, doble clic/Enter para terminar, Esc cancela"
+            : "+ Trazo nuevo"}
         </button>
-        {view.arrows.length > 0 && (
+        <div className="flex items-center gap-2 mb-1">
+          <input
+            type="color"
+            value={penStyle.color}
+            onChange={(e) => setPenStyle({ color: e.target.value })}
+            className="w-6 h-6 bg-transparent border-0 cursor-pointer"
+            title="Color del trazo"
+          />
+          <input
+            type="range"
+            min={1}
+            max={10}
+            value={penStyle.strokeWidth}
+            onChange={(e) => setPenStyle({ strokeWidth: Number(e.target.value) })}
+            className="flex-1"
+            title="Grosor"
+          />
+          <span className="text-xs text-neutral-400 w-6 text-right">
+            {penStyle.strokeWidth}px
+          </span>
+        </div>
+        <div className="flex items-center gap-3 text-xs text-neutral-300">
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={penStyle.dashed}
+              onChange={(e) => setPenStyle({ dashed: e.target.checked })}
+            />
+            Discontinua
+          </label>
+          <label className="flex items-center gap-1">
+            <input
+              type="checkbox"
+              checked={penStyle.rounded}
+              onChange={(e) => setPenStyle({ rounded: e.target.checked })}
+            />
+            Borde redondeado
+          </label>
+        </div>
+        {view.annotations.length > 0 && (
           <ul className="mt-2 space-y-1">
-            {view.arrows.map((a, i) => (
+            {view.annotations.map((a, i) => (
               <li key={a.id} className="flex items-center gap-2 text-xs text-neutral-400">
                 <span
                   className="w-3 h-3 rounded-full inline-block"
                   style={{ background: a.color }}
                 />
-                <span className="flex-1">Flecha {i + 1}</span>
+                <span className="flex-1">Trazo {i + 1}</span>
                 <button
                   className="text-red-400 hover:text-red-300"
-                  onClick={() => deleteArrowFromView(sheet.id, view.id, a.id)}
+                  onClick={() => deleteAnnotation(sheet.id, view.id, a.id)}
                 >
                   x
                 </button>

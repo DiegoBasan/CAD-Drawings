@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type {
-  Arrow,
+  Annotation,
+  PaperSize,
   Part,
   Pose,
   RenderMode,
@@ -8,8 +9,8 @@ import type {
   ViewPreset,
   ViewInstance,
   PartStepState,
-  Vec3,
 } from "../types/domain";
+import { splitPartIntoParts } from "../importers/splitMesh";
 
 let uid = 0;
 export function nextId(prefix: string): string {
@@ -17,18 +18,20 @@ export function nextId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${uid}`;
 }
 
-const DEFAULT_VIEW_SIZE = { width: 420, height: 320 };
-const VIEW_INSERT_OFFSET = 32;
-
-const VIEW_PRESET_LABEL: Record<ViewPreset, string> = {
-  iso: "Isometrica",
+const VIEW_PRESET_SHORT_LABEL: Record<ViewPreset, string> = {
   front: "Frontal",
   back: "Posterior",
-  left: "Izquierda",
-  right: "Derecha",
+  left: "Lat. izq.",
+  right: "Lat. der.",
   top: "Superior",
   bottom: "Inferior",
+  isoTopA: "Isometrica",
+  isoTopB: "Isometrica B",
+  isoBottomA: "Iso. inferior",
+  isoBottomB: "Iso. inferior B",
 };
+
+const VIEW_INSERT_OFFSET = 24;
 
 interface AssemblyState {
   parts: Record<string, Part>;
@@ -44,9 +47,10 @@ interface AssemblyState {
   sheets: Record<string, Sheet>;
   sheetOrder: string[];
   currentSheetId: string | null;
-  /** which view (within the current sheet) arrow/outline tools apply to */
+  /** which view (within the current sheet) annotation tools apply to */
   activeViewId: string | null;
-  arrowToolActive: boolean;
+  penToolActive: boolean;
+  penStyle: { color: string; strokeWidth: number; dashed: boolean; rounded: boolean };
 
   addParts: (parts: Part[]) => void;
   clearParts: () => void;
@@ -54,30 +58,28 @@ interface AssemblyState {
   setPartPose: (id: string, pose: Pose) => void;
   setPartColor: (id: string, color: string) => void;
   setPartVisible: (id: string, visible: boolean) => void;
+  splitPart: (id: string) => void;
 
   setViewPreset: (v: ViewPreset) => void;
   setRenderMode: (m: RenderMode) => void;
 
   setTab: (tab: "3d" | "2d") => void;
 
-  createSheet: (name: string) => string;
+  createSheet: (name: string, paperSize: PaperSize) => string;
   deleteSheet: (id: string) => void;
   setCurrentSheet: (id: string | null) => void;
   renameSheet: (id: string, name: string) => void;
+  setSheetPaperSize: (id: string, paperSize: PaperSize) => void;
 
   insertView: (sheetId: string, viewPreset: ViewPreset) => string;
   deleteView: (sheetId: string, viewId: string) => void;
   moveView: (sheetId: string, viewId: string, x: number, y: number) => void;
-  resizeView: (
-    sheetId: string,
-    viewId: string,
-    width: number,
-    height: number
-  ) => void;
   updateView: (
     sheetId: string,
     viewId: string,
-    patch: Partial<Pick<ViewInstance, "viewPreset" | "renderMode" | "label">>
+    patch: Partial<
+      Pick<ViewInstance, "viewPreset" | "renderMode" | "label" | "scale">
+    >
   ) => void;
   setActiveView: (viewId: string | null) => void;
 
@@ -88,15 +90,14 @@ interface AssemblyState {
     patch: Partial<PartStepState>
   ) => void;
 
-  setArrowToolActive: (active: boolean) => void;
-  addArrowToView: (
+  setPenToolActive: (active: boolean) => void;
+  setPenStyle: (patch: Partial<AssemblyState["penStyle"]>) => void;
+  addAnnotation: (
     sheetId: string,
     viewId: string,
-    from: Vec3,
-    to: Vec3,
-    color?: string
+    points: { x: number; y: number }[]
   ) => void;
-  deleteArrowFromView: (sheetId: string, viewId: string, arrowId: string) => void;
+  deleteAnnotation: (sheetId: string, viewId: string, annotationId: string) => void;
 }
 
 export const useAssemblyStore = create<AssemblyState>((set, get) => ({
@@ -105,7 +106,7 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
   poses: {},
   selectedPartId: null,
 
-  viewPreset: "iso",
+  viewPreset: "isoTopA",
   renderMode: "shaded",
 
   tab: "3d",
@@ -114,7 +115,8 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
   sheetOrder: [],
   currentSheetId: null,
   activeViewId: null,
-  arrowToolActive: false,
+  penToolActive: false,
+  penStyle: { color: "#ff2d55", strokeWidth: 2, dashed: false, rounded: true },
 
   addParts: (parts) =>
     set((s) => {
@@ -147,14 +149,43 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
       parts: { ...s.parts, [id]: { ...s.parts[id], visible } },
     })),
 
+  splitPart: (id) => {
+    const s = get();
+    const part = s.parts[id];
+    const pose = s.poses[id];
+    if (!part || !pose) return;
+    const newParts = splitPartIntoParts(part, pose);
+    if (newParts.length <= 1) return; // already a single body
+
+    set((st) => {
+      const parts = { ...st.parts };
+      const poses = { ...st.poses };
+      delete parts[id];
+      delete poses[id];
+      const order = st.partOrder.filter((pid) => pid !== id);
+      for (const np of newParts) {
+        parts[np.id] = np;
+        poses[np.id] = np.basePose;
+        order.push(np.id);
+      }
+      return {
+        parts,
+        poses,
+        partOrder: order,
+        selectedPartId:
+          st.selectedPartId === id ? null : st.selectedPartId,
+      };
+    });
+  },
+
   setViewPreset: (v) => set({ viewPreset: v }),
   setRenderMode: (m) => set({ renderMode: m }),
 
   setTab: (tab) => set({ tab }),
 
-  createSheet: (name) => {
+  createSheet: (name, paperSize) => {
     const id = nextId("sheet");
-    const sheet: Sheet = { id, name, views: [] };
+    const sheet: Sheet = { id, name, paperSize, views: [] };
     set((s) => ({
       sheets: { ...s.sheets, [id]: sheet },
       sheetOrder: [...s.sheetOrder, id],
@@ -189,6 +220,13 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
       return { sheets: { ...s.sheets, [id]: { ...sheet, name } } };
     }),
 
+  setSheetPaperSize: (id, paperSize) =>
+    set((s) => {
+      const sheet = s.sheets[id];
+      if (!sheet) return {};
+      return { sheets: { ...s.sheets, [id]: { ...sheet, paperSize } } };
+    }),
+
   insertView: (sheetId, viewPreset) => {
     const s = get();
     const sheet = s.sheets[sheetId];
@@ -204,15 +242,14 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
     const insertIndex = sheet.views.length;
     const view: ViewInstance = {
       id,
-      label: `Vista ${VIEW_PRESET_LABEL[viewPreset]} ${insertIndex + 1}`,
+      label: `${VIEW_PRESET_SHORT_LABEL[viewPreset]} ${insertIndex + 1}`,
       x: 24 + insertIndex * VIEW_INSERT_OFFSET,
       y: 24 + insertIndex * VIEW_INSERT_OFFSET,
-      width: DEFAULT_VIEW_SIZE.width,
-      height: DEFAULT_VIEW_SIZE.height,
+      scale: 1,
       viewPreset,
       renderMode: "shaded",
       partStates,
-      arrows: [],
+      annotations: [],
     };
     set((st) => ({
       sheets: {
@@ -241,18 +278,6 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
       if (!sheet) return {};
       const views = sheet.views.map((v) =>
         v.id === viewId ? { ...v, x, y } : v
-      );
-      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
-    }),
-
-  resizeView: (sheetId, viewId, width, height) =>
-    set((s) => {
-      const sheet = s.sheets[sheetId];
-      if (!sheet) return {};
-      const views = sheet.views.map((v) =>
-        v.id === viewId
-          ? { ...v, width: Math.max(120, width), height: Math.max(90, height) }
-          : v
       );
       return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
     }),
@@ -286,9 +311,32 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
       return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
     }),
 
-  setArrowToolActive: (active) => set({ arrowToolActive: active }),
+  setPenToolActive: (active) => set({ penToolActive: active }),
+  setPenStyle: (patch) =>
+    set((s) => ({ penStyle: { ...s.penStyle, ...patch } })),
 
-  addArrowToView: (sheetId, viewId, from, to, color = "#ff2d55") =>
+  addAnnotation: (sheetId, viewId, points) =>
+    set((s) => {
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const style = s.penStyle;
+      const annotation: Annotation = {
+        id: nextId("annot"),
+        points,
+        color: style.color,
+        strokeWidth: style.strokeWidth,
+        dashed: style.dashed,
+        rounded: style.rounded,
+      };
+      const views = sheet.views.map((v) =>
+        v.id === viewId
+          ? { ...v, annotations: [...v.annotations, annotation] }
+          : v
+      );
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
+    }),
+
+  deleteAnnotation: (sheetId, viewId, annotationId) =>
     set((s) => {
       const sheet = s.sheets[sheetId];
       if (!sheet) return {};
@@ -296,23 +344,8 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
         v.id === viewId
           ? {
               ...v,
-              arrows: [
-                ...v.arrows,
-                { id: nextId("arrow"), from, to, color } as Arrow,
-              ],
+              annotations: v.annotations.filter((a) => a.id !== annotationId),
             }
-          : v
-      );
-      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
-    }),
-
-  deleteArrowFromView: (sheetId, viewId, arrowId) =>
-    set((s) => {
-      const sheet = s.sheets[sheetId];
-      if (!sheet) return {};
-      const views = sheet.views.map((v) =>
-        v.id === viewId
-          ? { ...v, arrows: v.arrows.filter((a) => a.id !== arrowId) }
           : v
       );
       return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };

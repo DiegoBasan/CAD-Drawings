@@ -29,20 +29,16 @@ export interface Part {
 export type RenderMode = "shaded" | "xray" | "wireframe" | "wireframe-xray";
 
 export type ViewPreset =
-  | "iso"
   | "front"
   | "back"
   | "left"
   | "right"
   | "top"
-  | "bottom";
-
-export interface Arrow {
-  id: string;
-  from: Vec3;
-  to: Vec3;
-  color: string;
-}
+  | "bottom"
+  | "isoTopA" // default iso: top corner, +x -y +z
+  | "isoTopB" // opposite top corner: -x +y +z
+  | "isoBottomA" // top corner mirrored down: +x -y -z
+  | "isoBottomB"; // opposite corner mirrored down: -x +y -z
 
 export interface PartStepState {
   visible: boolean;
@@ -52,30 +48,46 @@ export interface PartStepState {
   opacity?: number; // 0..1, useful combined with xray
 }
 
+/** A freehand annotation stroke drawn on top of a view, Figma-pen-style.
+ * Points are fractions (0..1) of the view's current rendered box, so the
+ * stroke stays aligned with the view if its size changes (e.g. its scale
+ * is edited later). */
+export interface Annotation {
+  id: string;
+  points: { x: number; y: number }[];
+  color: string;
+  strokeWidth: number; // px
+  dashed: boolean;
+  rounded: boolean; // round line joins/caps vs. sharp miter/butt
+}
+
+export type PaperSize = "A4" | "A3" | "A2" | "A1";
+
 /**
  * One inserted, frozen orthographic projection of the assembly -- like a
  * SolidWorks drawing view. Captures part poses/visibility at insertion time
- * plus its own camera direction, render mode, and annotations (arrows,
- * outline colors). Placed on a Sheet at (x, y, width, height) in sheet
- * space (CSS px at 1:1 zoom) so several views can sit side by side and be
- * dragged around independently of the 3D scene.
+ * plus its own camera direction, render mode, and annotations. Placed on a
+ * Sheet at (x, y) in sheet space; its rendered size is NOT freely resizable
+ * -- it's derived from the real-world size of the frozen geometry and the
+ * chosen drawing `scale` (e.g. 1:2), same as inserting a view in a
+ * SolidWorks drawing.
  */
 export interface ViewInstance {
   id: string;
   label: string;
   x: number;
   y: number;
-  width: number;
-  height: number;
+  scale: number; // drawing-units per model-unit, e.g. 0.5 for "1:2", 2 for "2:1"
   viewPreset: ViewPreset;
   renderMode: RenderMode;
   partStates: Record<string, PartStepState>; // partId -> state
-  arrows: Arrow[];
+  annotations: Annotation[];
 }
 
 /** A drawing page/canvas holding one or more inserted views. */
 export interface Sheet {
   id: string;
   name: string;
+  paperSize: PaperSize;
   views: ViewInstance[];
 }

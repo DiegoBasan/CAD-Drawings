@@ -47,8 +47,8 @@ export default function Viewport() {
     scene.background = new THREE.Color(0x1b1f24);
     sceneRef.current = scene;
 
-    const width = container.clientWidth;
-    const height = container.clientHeight;
+    const width = container.clientWidth || 1;
+    const height = container.clientHeight || 1;
     const aspect = width / height;
     const camera = new THREE.OrthographicCamera(
       (-frustumSizeRef.current * aspect) / 2,
@@ -58,7 +58,7 @@ export default function Viewport() {
       0.001,
       100000
     );
-    applyViewPreset(camera, "iso", new THREE.Vector3(0, 0, 0), 10);
+    applyViewPreset(camera, "isoTopA", new THREE.Vector3(0, 0, 0), 10);
     cameraRef.current = camera;
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -98,6 +98,7 @@ export default function Viewport() {
     function onResize() {
       const w = container.clientWidth;
       const h = container.clientHeight;
+      if (w === 0 || h === 0) return; // hidden (other tab active)
       const asp = w / h;
       const f = frustumSizeRef.current;
       camera.left = (-f * asp) / 2;
@@ -108,6 +109,12 @@ export default function Viewport() {
       renderer.setSize(w, h);
     }
     window.addEventListener("resize", onResize);
+    // Toggling the container's visibility (switching tabs) doesn't fire a
+    // window resize event, so watch the container itself -- otherwise
+    // coming back to this tab leaves the renderer sized 0x0 from when it
+    // was hidden.
+    const resizeObserver = new ResizeObserver(onResize);
+    resizeObserver.observe(container);
 
     function toNDC(e: PointerEvent): THREE.Vector2 {
       const rect = renderer.domElement.getBoundingClientRect();
@@ -199,6 +206,7 @@ export default function Viewport() {
     return () => {
       running = false;
       cancelAnimationFrame(rafRef.current);
+      resizeObserver.disconnect();
       window.removeEventListener("resize", onResize);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);

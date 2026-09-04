@@ -1,16 +1,21 @@
 import { useRef, useState } from "react";
 import { useAssemblyStore } from "../assembly/store";
 import { loadModelFile } from "../importers/loadModel";
+import { VIEW_PRESET_LABEL } from "../scene/viewPresets";
+import ViewPresetIcon from "./ViewPresetIcon";
 import type { RenderMode, ViewPreset } from "../types/domain";
 
-const VIEW_PRESETS: { id: ViewPreset; label: string }[] = [
-  { id: "iso", label: "Isometrica" },
-  { id: "front", label: "Frontal" },
-  { id: "back", label: "Posterior" },
-  { id: "left", label: "Izquierda" },
-  { id: "right", label: "Derecha" },
-  { id: "top", label: "Superior" },
-  { id: "bottom", label: "Inferior" },
+const VIEW_PRESETS: ViewPreset[] = [
+  "front",
+  "right",
+  "left",
+  "back",
+  "top",
+  "bottom",
+  "isoTopA",
+  "isoTopB",
+  "isoBottomA",
+  "isoBottomB",
 ];
 
 const RENDER_MODES: { id: RenderMode; label: string }[] = [
@@ -94,15 +99,16 @@ export default function Toolbar() {
           <span className="text-neutral-400">Vista:</span>
           {VIEW_PRESETS.map((v) => (
             <button
-              key={v.id}
-              onClick={() => setViewPreset(v.id)}
-              className={`px-2 py-1 rounded ${
-                viewPreset === v.id
+              key={v}
+              onClick={() => setViewPreset(v)}
+              title={VIEW_PRESET_LABEL[v]}
+              className={`p-1 rounded ${
+                viewPreset === v
                   ? "bg-blue-600"
                   : "bg-neutral-800 hover:bg-neutral-700"
               }`}
             >
-              {v.label}
+              <ViewPresetIcon preset={v} />
             </button>
           ))}
 

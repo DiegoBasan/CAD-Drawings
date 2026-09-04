@@ -7,6 +7,7 @@ export default function PartsPanel() {
   const selectPart = useAssemblyStore((s) => s.selectPart);
   const setPartVisible = useAssemblyStore((s) => s.setPartVisible);
   const setPartColor = useAssemblyStore((s) => s.setPartColor);
+  const splitPart = useAssemblyStore((s) => s.splitPart);
 
   if (partOrder.length === 0) {
     return (
@@ -39,6 +40,16 @@ export default function PartsPanel() {
             <span className="flex-1 truncate text-neutral-200">
               {part.name}
             </span>
+            <button
+              className="text-xs text-neutral-400 hover:text-neutral-200"
+              title="Separar esta pieza en sus cuerpos independientes (util si un ensamble se importo como una sola pieza)"
+              onClick={(e) => {
+                e.stopPropagation();
+                splitPart(id);
+              }}
+            >
+              separar
+            </button>
             <input
               type="color"
               value={part.color}
