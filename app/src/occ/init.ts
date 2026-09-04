@@ -19,8 +19,10 @@ export function loadOcc(): Promise<any> {
         .default as any;
       return factory({
         locateFile(path: string) {
-          if (path.endsWith(".wasm")) return WASM_CDN_URL;
-          return path;
+          const url = path.includes(".wasm") ? WASM_CDN_URL : path;
+          // eslint-disable-next-line no-console
+          console.log("[occ] locateFile", { path, url });
+          return url;
         },
       });
     })();
