@@ -43,7 +43,7 @@ Separación clave (igual que el proyecto de referencia): `occ/` no sabe nada de 
 
 ### Nota sobre el WASM de OpenCASCADE
 
-El binario `opencascade.wasm.wasm` (~63 MB) vive en `app/public/` y se sirve como asset estático — `occ/init.ts` le pasa esa ruta absoluta a `locateFile` para que el loader de Emscripten no intente empaquetarlo con Vite. La primera vez que importas un STEP/IGES en una sesión del navegador, ese archivo se descarga una vez y queda cacheado por el navegador.
+El binario `opencascade.wasm.wasm` (~63 MB) NO está commiteado al repo — se descarga en runtime desde jsdelivr (`https://cdn.jsdelivr.net/npm/opencascade.js@<version>/dist/opencascade.wasm.wasm`), configurado en `occ/init.ts` vía `locateFile`. Se probó servirlo desde `app/public/`, pero GitHub rechaza/trunca archivos así de grandes en su API de contenidos, lo que rompía el import de este repo en herramientas como StackBlitz ("expected magic word... found File", i.e. recibían la respuesta de error de la API en vez del binario). El CDN evita ese problema y de paso no infla el repo ni el clone. La primera vez que importas un STEP/IGES en una sesión del navegador, ese archivo se descarga una vez y queda cacheado.
 
 ## Desarrollo
 
