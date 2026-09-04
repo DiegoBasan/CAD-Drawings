@@ -18,7 +18,7 @@ export default function PlansPanel() {
   const setArrowToolActive = useAssemblyStore((s) => s.setArrowToolActive);
   const deleteArrow = useAssemblyStore((s) => s.deleteArrow);
 
-  const [newPlanName, setNewPlanName] = useState("Guia de ensamble");
+  const [newPlanName, setNewPlanName] = useState("Dibujo 1");
 
   const plan = currentPlanId ? plans[currentPlanId] : null;
   const step = plan && isPlanMode ? plan.steps[currentStepIndex] : null;
@@ -31,7 +31,7 @@ export default function PlansPanel() {
           value={currentPlanId ?? ""}
           onChange={(e) => setCurrentPlan(e.target.value || null)}
         >
-          <option value="">-- sin plano --</option>
+          <option value="">-- sin dibujo --</option>
           {planOrder.map((id) => (
             <option key={id} value={id}>
               {plans[id].name}
@@ -56,9 +56,9 @@ export default function PlansPanel() {
         />
         <button
           className="px-2 py-1 rounded bg-blue-600 hover:bg-blue-500 text-sm"
-          onClick={() => createPlan(newPlanName || "Plano")}
+          onClick={() => createPlan(newPlanName || "Dibujo")}
         >
-          + Plano nuevo
+          + Dibujo nuevo
         </button>
       </div>
 
@@ -68,8 +68,9 @@ export default function PlansPanel() {
             <button
               className="w-full px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 text-sm"
               onClick={() => addStep(plan.id, true)}
+              title="Inserta una vista fija (proyeccion ortografica) del ensamble tal como esta acomodado ahora mismo en el editor 3D"
             >
-              + Agregar paso (captura ensamble actual)
+              + Insertar vista (congela el ensamble actual)
             </button>
           </div>
           {plan.steps.map((step, i) => (
@@ -106,8 +107,10 @@ export default function PlansPanel() {
           ))}
           {plan.steps.length === 0 && (
             <div className="p-2 text-neutral-500 text-xs">
-              Sin pasos todavia. Mueve las piezas a la posicion que quieras
-              mostrar y presiona "Agregar paso".
+              Sin vistas todavia. Primero acomoda las piezas como quieras en
+              el editor 3D (arriba, con el dibujo cerrado), luego vuelve aqui
+              y presiona "Insertar vista" para congelar ese acomodo como una
+              vista del dibujo.
             </div>
           )}
 

@@ -132,11 +132,17 @@ export default function Toolbar() {
       {isPlanMode && (
         <>
           <div className="w-px h-6 bg-neutral-700 mx-1" />
+          <span
+            className="px-2 py-1 rounded bg-amber-900/60 text-amber-300 text-xs"
+            title="Estas viendo una vista de dibujo: proyeccion fija, no se puede rotar la camara ni arrastrar piezas. Cambia la direccion de vista arriba si quieres, o sal a editar el ensamble."
+          >
+            🔒 Vista de dibujo (camara fija)
+          </span>
           <button
             className="px-2 py-1 rounded bg-amber-700 hover:bg-amber-600"
             onClick={exitPlanMode}
           >
-            Salir del plano (editar ensamble)
+            Salir del dibujo (volver a acomodar piezas en 3D)
           </button>
         </>
       )}

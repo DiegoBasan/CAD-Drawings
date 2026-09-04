@@ -5,17 +5,19 @@ Visor CAD web para crear guías de ensamble paso a paso (estilo manual de LEGO /
 ## Qué hace hoy
 
 - **Importar CAD real**: `.step`/`.stp` e `.iges`/`.igs` vía `opencascade.js` (OCCT compilado a WASM) — geometría B-Rep de verdad, no solo mallas. También `.stl`, `.obj`, `.glb`/`.gltf`. Cada cuerpo/mesh se separa en una **pieza** independiente y movible; en un STEP de ensamble, cada sub-compound no anidado se trata como una pieza rígida (ver `occ/stepImport.ts`).
-- **Mover piezas** individualmente arrastrando con el mouse (drag sobre un plano perpendicular a la cámara).
+- **Mover piezas** individualmente arrastrando con el mouse (drag sobre un plano perpendicular a la cámara) — solo en el editor 3D del ensamble, no dentro de un dibujo.
 - **Vistas de cámara**: isométrica, frontal, posterior, izquierda, derecha, superior, inferior (convención Z-up, cámara ortográfica).
 - **Modos de visualización**: color (shaded), rayos X, armazón (solo líneas / wireframe), armazón rayos X.
-- **Planos (guías paso a paso)**: crea un "plano", agrega pasos que capturan el estado actual del ensamble (posición de cada pieza, visibilidad, vista de cámara, modo de render). Navega entre pasos para reproducir la guía.
-- **Señalar piezas**: en cada paso, cualquier pieza puede recibir un color de contorno (`outlineColor`) distinto para resaltarla, independiente del color base de la pieza.
-- **Flechas**: en cada paso puedes activar la herramienta de flecha y hacer clic en el punto de origen y luego en el destino (sobre cualquier pieza visible) para dibujar una flecha de instrucción; se listan y se pueden borrar desde el panel del plano.
+- **Cámara auto-encuadrada**: al importar, la cámara y la cuadrícula se ajustan automáticamente al tamaño real del modelo (una pieza de 5cm y un ensamble de 2m usan escalas de rejilla muy distintas).
+- **Dibujos (flujo tipo SolidWorks)**: primero acomodas todas las piezas libremente en el editor 3D. Luego, en el panel "Dibujos", **insertas una vista** que congela ese acomodo como una proyección ortográfica fija (como insertar una vista en un drawing de SolidWorks) — dirección de cámara y modo de render incluidos. Mientras estás dentro de una vista de dibujo la cámara queda bloqueada (no rotable, sí zoom/pan) y no se pueden arrastrar piezas: solo anotar. Un dibujo puede tener varias vistas (para una guía paso a paso, cada vista es un "paso").
+- **Señalar piezas**: dentro de una vista de dibujo, cualquier pieza puede recibir un color de contorno (`outlineColor`) distinto para resaltarla, independiente del color base de la pieza.
+- **Flechas**: dentro de una vista de dibujo, activa la herramienta de flecha y haz clic en el punto de origen y luego en el destino (sobre cualquier pieza visible) para dibujar una flecha de instrucción; se listan y se pueden borrar desde el panel del dibujo.
 
 ## Qué falta / roadmap
 
+- Las flechas y el color de contorno todavía se resuelven con raycasting sobre la escena 3D (la cámara está bloqueada pero sigue siendo una escena 3D real, no un canvas 2D independiente). Un canvas 2D propio (SVG/Canvas superpuesto, guardando coordenadas de pantalla en vez de mundo) daría anotaciones que se comportan de forma más parecida a un drawing real de SolidWorks (p. ej. texto, cotas, líneas de referencia) — es el siguiente paso natural si esto se queda corto.
 - Las aristas de piezas STEP se dibujan hoy desde la malla triangulada (`THREE.EdgesGeometry`), no desde las curvas B-Rep reales — los círculos/filetes se ven poligonales en vez de perfectamente suaves. El siguiente paso natural es samplear `BRepAdaptor_Curve` por arista (igual que el proyecto de referencia) y dibujar esas polilíneas en vez de depender del umbral de ángulo de la malla.
-- Guardar/cargar proyecto (`.json` con piezas + poses + planos).
+- Guardar/cargar proyecto (`.json` con piezas + poses + dibujos).
 - Snap a un solo eje al arrastrar (Shift), rotación de piezas (arcball / spin), como en el proyecto de referencia.
 - Editar/mover el punto de una flecha ya creada (hoy solo se puede borrar y volver a trazar).
 

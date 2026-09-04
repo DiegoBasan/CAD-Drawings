@@ -3,6 +3,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { useAssemblyStore } from "../assembly/store";
 import { applyViewPreset } from "./viewPresets";
+import { computeAssemblyBounds } from "./bounds";
 import type { Part, Pose, RenderMode } from "../types/domain";
 
 interface PartVisual {
@@ -64,12 +65,22 @@ function applyRenderMode(
   }
 }
 
+/** "Nice" grid step (1, 2, 5 x10^n) at or below `raw`. */
+function niceGridStep(raw: number): number {
+  const exp = Math.floor(Math.log10(raw));
+  const base = Math.pow(10, exp);
+  const frac = raw / base;
+  const step = frac >= 5 ? 5 : frac >= 2 ? 2 : 1;
+  return step * base;
+}
+
 export default function Viewport() {
   const containerRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
   const controlsRef = useRef<OrbitControls | null>(null);
+  const gridRef = useRef<THREE.GridHelper | null>(null);
   const visualsRef = useRef<Map<string, PartVisual>>(new Map());
   const raycasterRef = useRef(new THREE.Raycaster());
   const dragRef = useRef<{
@@ -81,6 +92,7 @@ export default function Viewport() {
   const rafRef = useRef<number>(0);
   const arrowGroupRef = useRef<THREE.Group | null>(null);
   const pendingArrowStartRef = useRef<THREE.Vector3 | null>(null);
+  const frustumSizeRef = useRef(5);
 
   // --- one-time scene setup ---
   useEffect(() => {
@@ -91,15 +103,14 @@ export default function Viewport() {
 
     const width = container.clientWidth;
     const height = container.clientHeight;
-    const frustum = 5;
     const aspect = width / height;
     const camera = new THREE.OrthographicCamera(
-      (-frustum * aspect) / 2,
-      (frustum * aspect) / 2,
-      frustum / 2,
-      -frustum / 2,
-      0.01,
-      1000
+      (-frustumSizeRef.current * aspect) / 2,
+      (frustumSizeRef.current * aspect) / 2,
+      frustumSizeRef.current / 2,
+      -frustumSizeRef.current / 2,
+      0.001,
+      100000
     );
     applyViewPreset(camera, "iso", new THREE.Vector3(0, 0, 0), 10);
     cameraRef.current = camera;
@@ -121,6 +132,7 @@ export default function Viewport() {
     const grid = new THREE.GridHelper(20, 20, 0x3a4048, 0x2a2f36);
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
+    gridRef.current = grid;
 
     const arrowGroup = new THREE.Group();
     scene.add(arrowGroup);
@@ -135,7 +147,7 @@ export default function Viewport() {
     function renderLoop() {
       if (!running) return;
       processDrag();
-      controls.update();
+      controlsRef.current?.update();
       renderer.render(scene, camera);
       rafRef.current = requestAnimationFrame(renderLoop);
     }
@@ -145,10 +157,11 @@ export default function Viewport() {
       const w = container.clientWidth;
       const h = container.clientHeight;
       const asp = w / h;
-      camera.left = (-frustum * asp) / 2;
-      camera.right = (frustum * asp) / 2;
-      camera.top = frustum / 2;
-      camera.bottom = -frustum / 2;
+      const f = frustumSizeRef.current;
+      camera.left = (-f * asp) / 2;
+      camera.right = (f * asp) / 2;
+      camera.top = f / 2;
+      camera.bottom = -f / 2;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
     }
@@ -230,7 +243,7 @@ export default function Viewport() {
       const id = pickPartId(ndc);
       const { selectPart } = useAssemblyStore.getState();
       selectPart(id);
-      if (!id || isPlanMode) return; // no drag-editing while viewing a locked plan step
+      if (!id || isPlanMode) return; // drawing views are a fixed, locked projection
 
       const visual = visualsRef.current.get(id);
       if (!visual) return;
@@ -249,7 +262,7 @@ export default function Viewport() {
       raycaster.ray.intersectPlane(plane, hitPoint);
       const offset = worldPos.clone().sub(hitPoint);
       dragRef.current = { id, plane, offset };
-      controls.enabled = false;
+      if (controlsRef.current) controlsRef.current.enabled = false;
     }
 
     function onPointerMove(e: PointerEvent) {
@@ -269,19 +282,18 @@ export default function Viewport() {
       const hitPoint = new THREE.Vector3();
       if (!raycaster.ray.intersectPlane(drag.plane, hitPoint)) return;
       const newWorldPos = hitPoint.add(drag.offset);
-      const { setPartPose, parts, poses } = useAssemblyStore.getState();
+      const { setPartPose, poses } = useAssemblyStore.getState();
       const pose = poses[drag.id];
       if (!pose) return;
       setPartPose(drag.id, {
         ...pose,
         position: [newWorldPos.x, newWorldPos.y, newWorldPos.z],
       });
-      void parts;
     }
 
     function onPointerUp() {
       dragRef.current = null;
-      controls.enabled = true;
+      if (controlsRef.current) controlsRef.current.enabled = true;
     }
 
     renderer.domElement.addEventListener("pointerdown", onPointerDown);
@@ -300,7 +312,7 @@ export default function Viewport() {
     };
   }, []);
 
-  // --- sync parts (add/remove meshes) ---
+  // --- sync parts (add/remove meshes) + auto-frame camera/grid to scale ---
   useEffect(() => {
     const unsub = useAssemblyStore.subscribe((state, prev) => {
       if (state.parts !== prev.parts) syncParts(state.parts);
@@ -312,6 +324,7 @@ export default function Viewport() {
       const scene = sceneRef.current;
       if (!scene) return;
       const visuals = visualsRef.current;
+      let hasNewPart = false;
 
       for (const [id, visual] of visuals) {
         if (!parts[id]) {
@@ -326,6 +339,7 @@ export default function Viewport() {
 
       for (const part of Object.values(parts)) {
         if (visuals.has(part.id)) continue;
+        hasNewPart = true;
         const geom = new THREE.BufferGeometry();
         geom.setAttribute(
           "position",
@@ -351,6 +365,54 @@ export default function Viewport() {
 
         scene.add(mesh, edges);
         visuals.set(part.id, { mesh, edges, material, edgeMaterial });
+      }
+
+      if (hasNewPart) {
+        const { parts: allParts, poses, viewPreset } =
+          useAssemblyStore.getState();
+        const bounds = computeAssemblyBounds(allParts, poses);
+        const camera = cameraRef.current;
+        const controls = controlsRef.current;
+        const grid = gridRef.current;
+        const renderer = rendererRef.current;
+        if (bounds && camera && controls && grid && renderer) {
+          const frustum = Math.max(bounds.radius * 2.4, 1e-3);
+          frustumSizeRef.current = frustum;
+          const w = renderer.domElement.clientWidth || 1;
+          const h = renderer.domElement.clientHeight || 1;
+          const aspect = w / h;
+          camera.left = (-frustum * aspect) / 2;
+          camera.right = (frustum * aspect) / 2;
+          camera.top = frustum / 2;
+          camera.bottom = -frustum / 2;
+          camera.near = 0.001;
+          camera.far = Math.max(frustum * 200, 1000);
+
+          controls.target.copy(bounds.center);
+          applyViewPreset(camera, viewPreset, bounds.center, frustum * 2);
+
+          const gridStep = niceGridStep(frustum / 10);
+          const divisions = Math.max(
+            4,
+            Math.min(200, Math.round((frustum * 1.6) / gridStep))
+          );
+          const size = gridStep * divisions;
+          const newGrid = new THREE.GridHelper(
+            size,
+            divisions,
+            0x3a4048,
+            0x2a2f36
+          );
+          newGrid.rotation.x = Math.PI / 2;
+          newGrid.position.set(bounds.center.x, bounds.center.y, 0);
+          grid.parent?.add(newGrid);
+          grid.parent?.remove(grid);
+          grid.geometry.dispose();
+          (grid.material as THREE.Material).dispose();
+          gridRef.current = newGrid;
+
+          controls.update();
+        }
       }
     }
   }, []);
@@ -415,6 +477,7 @@ export default function Viewport() {
           const child = arrowGroup.children.pop()!;
           if (child instanceof THREE.ArrowHelper) child.dispose();
         }
+        const arrowScale = Math.max(frustumSizeRef.current * 0.06, 1e-4);
         for (const arrow of step?.arrows ?? []) {
           const from = new THREE.Vector3(...arrow.from);
           const to = new THREE.Vector3(...arrow.to);
@@ -426,8 +489,8 @@ export default function Viewport() {
             from,
             length,
             new THREE.Color(arrow.color).getHex(),
-            Math.min(0.3, length * 0.3),
-            Math.min(0.18, length * 0.2)
+            Math.min(arrowScale, length * 0.3),
+            Math.min(arrowScale * 0.6, length * 0.2)
           );
           arrowGroup.add(helper);
         }
@@ -435,18 +498,27 @@ export default function Viewport() {
 
       const camera = cameraRef.current;
       const controls = controlsRef.current;
-      if (camera && controls) {
+      const renderer = rendererRef.current;
+      if (camera && controls && renderer) {
+        // A drawing step is a fixed, locked orthographic projection --
+        // like an inserted view in a SolidWorks drawing -- so disable
+        // free rotation while one is active. Panning/zooming to inspect
+        // the view is still allowed.
+        controls.enableRotate = !state.isPlanMode;
+
         const preset = step ? step.viewPreset : state.viewPreset;
         if ((camera as any)._lastPreset !== preset) {
           (camera as any)._lastPreset = preset;
-          const dist = camera.position.distanceTo(controls.target) || 10;
-          applyViewPreset(camera, preset, controls.target, dist);
-          controls.dispose();
-          const newControls = new OrbitControls(
+          applyViewPreset(
             camera,
-            rendererRef.current!.domElement
+            preset,
+            controls.target,
+            frustumSizeRef.current * 2
           );
+          controls.dispose();
+          const newControls = new OrbitControls(camera, renderer.domElement);
           newControls.target.copy(controls.target);
+          newControls.enableRotate = !state.isPlanMode;
           newControls.update();
           controlsRef.current = newControls;
         }
