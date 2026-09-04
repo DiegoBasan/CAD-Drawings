@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import type { Part, Pose } from "../types/domain";
+import type { Part, PartStepState, Pose } from "../types/domain";
 
 /**
  * World-space bounding sphere of every part at its given pose. Used to
@@ -39,4 +39,21 @@ export function computeAssemblyBounds(
   box.getSize(size);
   const radius = Math.max(size.length() / 2, 1e-3);
   return { center, radius };
+}
+
+/** Same as computeAssemblyBounds but scoped to one drawing view's frozen,
+ * per-part visibility/pose snapshot (only visible parts count). */
+export function computeViewBounds(
+  parts: Record<string, Part>,
+  partStates: Record<string, PartStepState>
+): { center: THREE.Vector3; radius: number } | null {
+  const poses: Record<string, Pose> = {};
+  const visibleParts: Record<string, Part> = {};
+  for (const [id, state] of Object.entries(partStates)) {
+    const part = parts[id];
+    if (!part || !state.visible || !state.pose) continue;
+    visibleParts[id] = part;
+    poses[id] = state.pose;
+  }
+  return computeAssemblyBounds(visibleParts, poses);
 }

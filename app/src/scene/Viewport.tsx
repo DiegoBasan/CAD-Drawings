@@ -4,66 +4,14 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { useAssemblyStore } from "../assembly/store";
 import { applyViewPreset } from "./viewPresets";
 import { computeAssemblyBounds } from "./bounds";
-import type { Part, Pose, RenderMode } from "../types/domain";
-
-interface PartVisual {
-  mesh: THREE.Mesh;
-  edges: THREE.LineSegments;
-  material: THREE.MeshStandardMaterial;
-  edgeMaterial: THREE.LineBasicMaterial;
-}
-
-function poseToMatrix(pose: Pose): THREE.Matrix4 {
-  const m = new THREE.Matrix4();
-  m.compose(
-    new THREE.Vector3(...pose.position),
-    new THREE.Quaternion(...pose.quaternion),
-    new THREE.Vector3(...pose.scale)
-  );
-  return m;
-}
-
-function applyRenderMode(
-  mode: RenderMode,
-  material: THREE.MeshStandardMaterial,
-  edgeMaterial: THREE.LineBasicMaterial,
-  mesh: THREE.Mesh,
-  edges: THREE.LineSegments
-) {
-  material.wireframe = false;
-  switch (mode) {
-    case "shaded":
-      mesh.visible = true;
-      edges.visible = true;
-      material.transparent = false;
-      material.opacity = 1;
-      material.depthWrite = true;
-      edgeMaterial.transparent = false;
-      edgeMaterial.opacity = 1;
-      break;
-    case "xray":
-      mesh.visible = true;
-      edges.visible = true;
-      material.transparent = true;
-      material.opacity = 0.25;
-      material.depthWrite = false;
-      edgeMaterial.transparent = false;
-      edgeMaterial.opacity = 1;
-      break;
-    case "wireframe":
-      mesh.visible = false;
-      edges.visible = true;
-      edgeMaterial.transparent = false;
-      edgeMaterial.opacity = 1;
-      break;
-    case "wireframe-xray":
-      mesh.visible = false;
-      edges.visible = true;
-      edgeMaterial.transparent = true;
-      edgeMaterial.opacity = 0.35;
-      break;
-  }
-}
+import {
+  applyRenderMode,
+  createPartVisual,
+  disposePartVisual,
+  poseToMatrix,
+  type PartVisual,
+} from "./partVisual";
+import type { Part } from "../types/domain";
 
 /** "Nice" grid step (1, 2, 5 x10^n) at or below `raw`. */
 function niceGridStep(raw: number): number {
@@ -90,8 +38,6 @@ export default function Viewport() {
   } | null>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number>(0);
-  const arrowGroupRef = useRef<THREE.Group | null>(null);
-  const pendingArrowStartRef = useRef<THREE.Vector3 | null>(null);
   const frustumSizeRef = useRef(5);
 
   // --- one-time scene setup ---
@@ -133,10 +79,6 @@ export default function Viewport() {
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
     gridRef.current = grid;
-
-    const arrowGroup = new THREE.Group();
-    scene.add(arrowGroup);
-    arrowGroupRef.current = arrowGroup;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0, 0);
@@ -191,59 +133,13 @@ export default function Viewport() {
       return idByMesh.get(hits[0].object as THREE.Mesh) ?? null;
     }
 
-    function pickPoint(ndc: THREE.Vector2): THREE.Vector3 | null {
-      const raycaster = raycasterRef.current;
-      raycaster.setFromCamera(ndc, camera);
-      const meshes: THREE.Mesh[] = [];
-      visualsRef.current.forEach((v) => {
-        if (v.mesh.visible) meshes.push(v.mesh);
-      });
-      const hits = raycaster.intersectObjects(meshes, false);
-      if (hits.length > 0) return hits[0].point.clone();
-      const fallbackPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
-      const p = new THREE.Vector3();
-      return raycaster.ray.intersectPlane(fallbackPlane, p) ? p : null;
-    }
-
     function onPointerDown(e: PointerEvent) {
       if (e.button !== 0) return;
       const ndc = toNDC(e);
-
-      const {
-        arrowToolActive,
-        isPlanMode,
-        currentPlanId,
-        currentStepIndex,
-        plans,
-        addArrow,
-      } = useAssemblyStore.getState();
-
-      if (arrowToolActive && isPlanMode && currentPlanId) {
-        const point = pickPoint(ndc);
-        if (!point) return;
-        const start = pendingArrowStartRef.current;
-        if (!start) {
-          pendingArrowStartRef.current = point;
-        } else {
-          const step = plans[currentPlanId]?.steps[currentStepIndex];
-          if (step) {
-            addArrow(
-              currentPlanId,
-              step.id,
-              [start.x, start.y, start.z],
-              [point.x, point.y, point.z]
-            );
-          }
-          pendingArrowStartRef.current = null;
-          useAssemblyStore.getState().setArrowToolActive(false);
-        }
-        return;
-      }
-
       const id = pickPartId(ndc);
       const { selectPart } = useAssemblyStore.getState();
       selectPart(id);
-      if (!id || isPlanMode) return; // drawing views are a fixed, locked projection
+      if (!id) return;
 
       const visual = visualsRef.current.get(id);
       if (!visual) return;
@@ -329,10 +225,7 @@ export default function Viewport() {
       for (const [id, visual] of visuals) {
         if (!parts[id]) {
           scene.remove(visual.mesh, visual.edges);
-          visual.mesh.geometry.dispose();
-          visual.material.dispose();
-          visual.edges.geometry.dispose();
-          visual.edgeMaterial.dispose();
+          disposePartVisual(visual);
           visuals.delete(id);
         }
       }
@@ -340,31 +233,9 @@ export default function Viewport() {
       for (const part of Object.values(parts)) {
         if (visuals.has(part.id)) continue;
         hasNewPart = true;
-        const geom = new THREE.BufferGeometry();
-        geom.setAttribute(
-          "position",
-          new THREE.BufferAttribute(part.geometry.positions, 3)
-        );
-        geom.setAttribute(
-          "normal",
-          new THREE.BufferAttribute(part.geometry.normals, 3)
-        );
-        geom.setIndex(new THREE.BufferAttribute(part.geometry.indices, 1));
-
-        const material = new THREE.MeshStandardMaterial({
-          color: part.color,
-          roughness: 0.6,
-          metalness: 0.1,
-          side: THREE.DoubleSide,
-        });
-        const mesh = new THREE.Mesh(geom, material);
-
-        const edgeGeom = new THREE.EdgesGeometry(geom, 30);
-        const edgeMaterial = new THREE.LineBasicMaterial({ color: 0x0a0a0a });
-        const edges = new THREE.LineSegments(edgeGeom, edgeMaterial);
-
-        scene.add(mesh, edges);
-        visuals.set(part.id, { mesh, edges, material, edgeMaterial });
+        const visual = createPartVisual(part);
+        scene.add(visual.mesh, visual.edges);
+        visuals.set(part.id, visual);
       }
 
       if (hasNewPart) {
@@ -417,7 +288,7 @@ export default function Viewport() {
     }
   }, []);
 
-  // --- sync poses, colors, visibility, view mode, selection, plan step ---
+  // --- sync poses, colors, visibility, view preset, render mode, selection ---
   useEffect(() => {
     const unsub = useAssemblyStore.subscribe((state) => applyState(state));
     applyState(useAssemblyStore.getState());
@@ -425,17 +296,11 @@ export default function Viewport() {
 
     function applyState(state: ReturnType<typeof useAssemblyStore.getState>) {
       const visuals = visualsRef.current;
-      const step =
-        state.isPlanMode && state.currentPlanId
-          ? state.plans[state.currentPlanId]?.steps[state.currentStepIndex]
-          : null;
 
       for (const [id, visual] of visuals) {
         const part = state.parts[id];
         if (!part) continue;
-        const stepState = step?.partStates[id];
-        const pose = stepState?.pose ?? state.poses[id];
-        const visible = step ? stepState?.visible ?? false : part.visible;
+        const pose = state.poses[id];
 
         visual.mesh.matrixAutoUpdate = false;
         visual.edges.matrixAutoUpdate = false;
@@ -443,26 +308,18 @@ export default function Viewport() {
         visual.mesh.matrix.copy(m);
         visual.edges.matrix.copy(m);
 
-        visual.mesh.visible = visible;
-        visual.edges.visible = visible;
+        visual.mesh.visible = part.visible;
+        visual.edges.visible = part.visible;
 
-        const baseColor = stepState?.highlightColor ?? part.color;
-        visual.material.color.set(baseColor);
-        if (stepState?.opacity !== undefined) {
-          visual.material.transparent = true;
-          visual.material.opacity = stepState.opacity;
-        }
+        visual.material.color.set(part.color);
 
         const isSelected = state.selectedPartId === id;
-        const outline = stepState?.outlineColor;
-        visual.edgeMaterial.color.set(
-          outline ?? (isSelected ? "#ff9900" : "#0a0a0a")
-        );
-        visual.edgeMaterial.linewidth = outline || isSelected ? 2 : 1;
+        visual.edgeMaterial.color.set(isSelected ? "#ff9900" : "#0a0a0a");
+        visual.edgeMaterial.linewidth = isSelected ? 2 : 1;
 
-        if (visible) {
+        if (part.visible) {
           applyRenderMode(
-            step ? step.renderMode : state.renderMode,
+            state.renderMode,
             visual.material,
             visual.edgeMaterial,
             visual.mesh,
@@ -471,54 +328,21 @@ export default function Viewport() {
         }
       }
 
-      const arrowGroup = arrowGroupRef.current;
-      if (arrowGroup) {
-        while (arrowGroup.children.length) {
-          const child = arrowGroup.children.pop()!;
-          if (child instanceof THREE.ArrowHelper) child.dispose();
-        }
-        const arrowScale = Math.max(frustumSizeRef.current * 0.06, 1e-4);
-        for (const arrow of step?.arrows ?? []) {
-          const from = new THREE.Vector3(...arrow.from);
-          const to = new THREE.Vector3(...arrow.to);
-          const dir = to.clone().sub(from);
-          const length = dir.length() || 0.001;
-          dir.normalize();
-          const helper = new THREE.ArrowHelper(
-            dir,
-            from,
-            length,
-            new THREE.Color(arrow.color).getHex(),
-            Math.min(arrowScale, length * 0.3),
-            Math.min(arrowScale * 0.6, length * 0.2)
-          );
-          arrowGroup.add(helper);
-        }
-      }
-
       const camera = cameraRef.current;
       const controls = controlsRef.current;
       const renderer = rendererRef.current;
       if (camera && controls && renderer) {
-        // A drawing step is a fixed, locked orthographic projection --
-        // like an inserted view in a SolidWorks drawing -- so disable
-        // free rotation while one is active. Panning/zooming to inspect
-        // the view is still allowed.
-        controls.enableRotate = !state.isPlanMode;
-
-        const preset = step ? step.viewPreset : state.viewPreset;
-        if ((camera as any)._lastPreset !== preset) {
-          (camera as any)._lastPreset = preset;
+        if ((camera as any)._lastPreset !== state.viewPreset) {
+          (camera as any)._lastPreset = state.viewPreset;
           applyViewPreset(
             camera,
-            preset,
+            state.viewPreset,
             controls.target,
             frustumSizeRef.current * 2
           );
           controls.dispose();
           const newControls = new OrbitControls(camera, renderer.domElement);
           newControls.target.copy(controls.target);
-          newControls.enableRotate = !state.isPlanMode;
           newControls.update();
           controlsRef.current = newControls;
         }

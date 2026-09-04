@@ -46,24 +46,36 @@ export interface Arrow {
 
 export interface PartStepState {
   visible: boolean;
-  pose?: Pose; // override pose for this step (e.g. exploded position); undefined = use assembly pose
+  pose?: Pose; // frozen pose captured when the view was inserted
   highlightColor?: string; // fill tint
   outlineColor?: string; // edge/border color to call out the part
   opacity?: number; // 0..1, useful combined with xray
 }
 
-export interface PlanStep {
+/**
+ * One inserted, frozen orthographic projection of the assembly -- like a
+ * SolidWorks drawing view. Captures part poses/visibility at insertion time
+ * plus its own camera direction, render mode, and annotations (arrows,
+ * outline colors). Placed on a Sheet at (x, y, width, height) in sheet
+ * space (CSS px at 1:1 zoom) so several views can sit side by side and be
+ * dragged around independently of the 3D scene.
+ */
+export interface ViewInstance {
   id: string;
-  name: string;
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
   viewPreset: ViewPreset;
   renderMode: RenderMode;
   partStates: Record<string, PartStepState>; // partId -> state
   arrows: Arrow[];
-  notes?: string;
 }
 
-export interface Plan {
+/** A drawing page/canvas holding one or more inserted views. */
+export interface Sheet {
   id: string;
   name: string;
-  steps: PlanStep[];
+  views: ViewInstance[];
 }

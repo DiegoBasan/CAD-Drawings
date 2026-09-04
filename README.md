@@ -5,43 +5,49 @@ Visor CAD web para crear guías de ensamble paso a paso (estilo manual de LEGO /
 ## Qué hace hoy
 
 - **Importar CAD real**: `.step`/`.stp` e `.iges`/`.igs` vía `opencascade.js` (OCCT compilado a WASM) — geometría B-Rep de verdad, no solo mallas. También `.stl`, `.obj`, `.glb`/`.gltf`. Cada cuerpo/mesh se separa en una **pieza** independiente y movible; en un STEP de ensamble, cada sub-compound no anidado se trata como una pieza rígida (ver `occ/stepImport.ts`).
-- **Mover piezas** individualmente arrastrando con el mouse (drag sobre un plano perpendicular a la cámara) — solo en el editor 3D del ensamble, no dentro de un dibujo.
+- **Dos pestañas independientes**: "Ensamble 3D" (edición libre: orbitar, mover piezas, elegir vista/modo de render) y "Dibujo 2D" (canvas de fondo blanco, sin cámara 3D libre, donde se componen vistas ya congeladas).
+- **Mover piezas** individualmente arrastrando con el mouse — solo en la pestaña 3D.
 - **Vistas de cámara**: isométrica, frontal, posterior, izquierda, derecha, superior, inferior (convención Z-up, cámara ortográfica).
-- **Modos de visualización**: color (shaded), rayos X, armazón (solo líneas / wireframe), armazón rayos X.
-- **Cámara auto-encuadrada**: al importar, la cámara y la cuadrícula se ajustan automáticamente al tamaño real del modelo (una pieza de 5cm y un ensamble de 2m usan escalas de rejilla muy distintas).
-- **Dibujos (flujo tipo SolidWorks)**: primero acomodas todas las piezas libremente en el editor 3D. Luego, en el panel "Dibujos", **insertas una vista** que congela ese acomodo como una proyección ortográfica fija (como insertar una vista en un drawing de SolidWorks) — dirección de cámara y modo de render incluidos. Mientras estás dentro de una vista de dibujo la cámara queda bloqueada (no rotable, sí zoom/pan) y no se pueden arrastrar piezas: solo anotar. Un dibujo puede tener varias vistas (para una guía paso a paso, cada vista es un "paso").
-- **Señalar piezas**: dentro de una vista de dibujo, cualquier pieza puede recibir un color de contorno (`outlineColor`) distinto para resaltarla, independiente del color base de la pieza.
-- **Flechas**: dentro de una vista de dibujo, activa la herramienta de flecha y haz clic en el punto de origen y luego en el destino (sobre cualquier pieza visible) para dibujar una flecha de instrucción; se listan y se pueden borrar desde el panel del dibujo.
+- **Modos de visualización**: color (shaded), rayos X, armazón (solo líneas, con oclusión — el sólido actúa de ocluyente invisible para que las aristas del lado lejano no se vean a través de la pieza), armazón rayos X (igual pero sin oclusión, totalmente transparente).
+- **Cámara auto-encuadrada**: al importar, la cámara y la cuadrícula (pestaña 3D) se ajustan automáticamente al tamaño real del modelo.
+- **Dibujos tipo SolidWorks**: en la pestaña 3D acomodas las piezas libremente. En la pestaña 2D creas uno o más **canvas** (hojas), y en cada uno **insertas vistas** (frontal, lateral, superior, isométrica...) — cada vista es una proyección ortográfica que congela el acomodo actual del ensamble 3D en ese instante. Varias vistas conviven en el mismo canvas, cada una es su propio recuadro que se puede **arrastrar y redimensionar** libremente dentro de la hoja (no hay cámara 3D compartida ni orbitable en este modo). Puedes seguir insertando más vistas y más canvas en cualquier momento.
+- **Señalar piezas**: seleccionando una vista en el canvas 2D, el panel lateral lista sus piezas y permite asignar un color de contorno (`outlineColor`) distinto por pieza para resaltarla.
+- **Flechas**: con una vista seleccionada, activa la herramienta de flecha y haz clic en el origen y luego en el destino (sobre cualquier pieza visible de esa vista) para dibujar una flecha de instrucción.
 
 ## Qué falta / roadmap
 
-- Las flechas y el color de contorno todavía se resuelven con raycasting sobre la escena 3D (la cámara está bloqueada pero sigue siendo una escena 3D real, no un canvas 2D independiente). Un canvas 2D propio (SVG/Canvas superpuesto, guardando coordenadas de pantalla en vez de mundo) daría anotaciones que se comportan de forma más parecida a un drawing real de SolidWorks (p. ej. texto, cotas, líneas de referencia) — es el siguiente paso natural si esto se queda corto.
-- Las aristas de piezas STEP se dibujan hoy desde la malla triangulada (`THREE.EdgesGeometry`), no desde las curvas B-Rep reales — los círculos/filetes se ven poligonales en vez de perfectamente suaves. El siguiente paso natural es samplear `BRepAdaptor_Curve` por arista (igual que el proyecto de referencia) y dibujar esas polilíneas en vez de depender del umbral de ángulo de la malla.
-- Guardar/cargar proyecto (`.json` con piezas + poses + dibujos).
-- Snap a un solo eje al arrastrar (Shift), rotación de piezas (arcball / spin), como en el proyecto de referencia.
+- Cada vista insertada sigue siendo un mini-render 3D congelado (su propia escena/cámara three.js), no un canvas 2D vectorial (SVG/Canvas) independiente. Funciona bien para lo pedido (arrastrar vistas, flechas, contornos), pero anotaciones más "de drawing real" (texto, cotas, líneas de referencia) pedirían pasar a coordenadas de pantalla puras.
+- Las aristas de piezas STEP se dibujan hoy desde la malla triangulada (`THREE.EdgesGeometry`), no desde las curvas B-Rep reales — los círculos/filetes se ven poligonales en vez de perfectamente suaves. El siguiente paso natural es samplear `BRepAdaptor_Curve` por arista y dibujar esas polilíneas en vez de depender del umbral de ángulo de la malla.
+- Guardar/cargar proyecto (`.json` con piezas + poses + canvas + vistas).
+- Snap a un solo eje al arrastrar (Shift), rotación de piezas (arcball / spin) en la pestaña 3D.
 - Editar/mover el punto de una flecha ya creada (hoy solo se puede borrar y volver a trazar).
+- Zoom/pan del propio canvas 2D (hoy es un lienzo de tamaño fijo con scroll).
 
 ## Arquitectura
 
 ```
 app/src/
-  types/domain.ts     # modelo de datos: Part, Pose, Plan, PlanStep, PartStepState, Arrow
-  assembly/store.ts    # estado global (zustand): piezas, poses, planos/pasos, selección, flechas
+  types/domain.ts     # modelo de datos: Part, Pose, Sheet, ViewInstance, PartStepState, Arrow
+  assembly/store.ts    # estado global (zustand): piezas/poses (3D), tab activa, hojas/vistas (2D)
   occ/
     init.ts             # carga/cachea la instancia WASM de OpenCASCADE una sola vez
     stepImport.ts         # lee STEP/IGES, separa el compound en piezas "rígidas"
     tessellate.ts          # B-Rep -> Float32Array de posiciones/normales/índices (Part)
   importers/loadModel.ts  # STL/OBJ/glTF -> Part[] (separa cuerpos, recentra origen) + despacha a occ/ para STEP/IGES
   scene/
-    Viewport.tsx        # escena three.js: cámara orto, OrbitControls, picking, drag, modos de render, flechas
-    viewPresets.ts       # direcciones de cámara para cada vista (iso/front/top/...)
+    partVisual.ts        # helpers compartidos: construir/actualizar mesh+edges de una Part, aplicar modo de render
+    bounds.ts             # bounding sphere del ensamble (o de una vista congelada) para auto-encuadrar cámara
+    viewPresets.ts          # direcciones de cámara para cada vista (iso/front/top/...)
+    Viewport.tsx             # pestaña 3D: escena libre, OrbitControls, picking, drag de piezas
+    DrawingViewBox.tsx        # una vista insertada en el canvas 2D: su propio mini-render congelado, arrastrable/redimensionable, flechas
   components/
-    Toolbar.tsx          # importar, elegir vista y modo de render
-    PartsPanel.tsx        # árbol de piezas: visibilidad, color, color de contorno por paso
-    PlansPanel.tsx         # crear planos, agregar/duplicar/eliminar pasos, herramienta de flechas
+    Toolbar.tsx          # importar, cambiar de pestaña, (en 3D) elegir vista/modo de render
+    PartsPanel.tsx        # pestaña 3D: lista de piezas, visibilidad, color
+    DrawingCanvas.tsx      # pestaña 2D: pestañas de hojas, botones "+ vista", area blanca con las DrawingViewBox
+    ViewInspector.tsx       # panel lateral en 2D: direccion/modo de la vista activa, flechas, color de contorno por pieza
 ```
 
-Separación clave (igual que el proyecto de referencia): `occ/` no sabe nada de three.js ni de React — solo produce arrays planos de geometría a partir del kernel OCCT. `scene/Viewport.tsx` es lo único que construye objetos three.js a partir de esos datos.
+Separación clave (igual que el proyecto de referencia): `occ/` no sabe nada de three.js ni de React — solo produce arrays planos de geometría a partir del kernel OCCT. `scene/partVisual.ts` es la única pieza que construye objetos three.js a partir de esos datos, y la comparten tanto `Viewport.tsx` (3D) como `DrawingViewBox.tsx` (cada vista del 2D).
 
 ### Nota sobre el WASM de OpenCASCADE
 

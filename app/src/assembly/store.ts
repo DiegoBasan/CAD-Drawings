@@ -2,15 +2,14 @@ import { create } from "zustand";
 import type {
   Arrow,
   Part,
-  Plan,
-  PlanStep,
   Pose,
   RenderMode,
+  Sheet,
   ViewPreset,
+  ViewInstance,
   PartStepState,
   Vec3,
 } from "../types/domain";
-import { identityPose } from "../types/domain";
 
 let uid = 0;
 export function nextId(prefix: string): string {
@@ -18,22 +17,35 @@ export function nextId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}_${uid}`;
 }
 
+const DEFAULT_VIEW_SIZE = { width: 420, height: 320 };
+const VIEW_INSERT_OFFSET = 32;
+
+const VIEW_PRESET_LABEL: Record<ViewPreset, string> = {
+  iso: "Isometrica",
+  front: "Frontal",
+  back: "Posterior",
+  left: "Izquierda",
+  right: "Derecha",
+  top: "Superior",
+  bottom: "Inferior",
+};
+
 interface AssemblyState {
   parts: Record<string, Part>;
   partOrder: string[];
-  poses: Record<string, Pose>; // current assembly pose per part (live, editable)
+  poses: Record<string, Pose>; // current assembly pose per part (live, editable, 3D tab)
   selectedPartId: string | null;
 
-  plans: Record<string, Plan>;
-  planOrder: string[];
-  currentPlanId: string | null;
-  currentStepIndex: number;
+  viewPreset: ViewPreset; // 3D tab camera preset
+  renderMode: RenderMode; // 3D tab render mode
 
-  viewPreset: ViewPreset;
-  renderMode: RenderMode;
-  /** when set, we are looking at a plan step instead of free assembly editing */
-  isPlanMode: boolean;
-  /** when true, next two clicks in the viewport define a new arrow on the current step */
+  tab: "3d" | "2d";
+
+  sheets: Record<string, Sheet>;
+  sheetOrder: string[];
+  currentSheetId: string | null;
+  /** which view (within the current sheet) arrow/outline tools apply to */
+  activeViewId: string | null;
   arrowToolActive: boolean;
 
   addParts: (parts: Part[]) => void;
@@ -46,25 +58,45 @@ interface AssemblyState {
   setViewPreset: (v: ViewPreset) => void;
   setRenderMode: (m: RenderMode) => void;
 
-  createPlan: (name: string) => string;
-  deletePlan: (id: string) => void;
-  setCurrentPlan: (id: string | null) => void;
-  addStep: (planId: string, fromCurrentAssembly?: boolean) => string;
-  deleteStep: (planId: string, stepId: string) => void;
-  duplicateStep: (planId: string, stepId: string) => string;
-  goToStep: (index: number) => void;
-  updateStep: (planId: string, stepId: string, patch: Partial<PlanStep>) => void;
-  setPartStepState: (
-    planId: string,
-    stepId: string,
+  setTab: (tab: "3d" | "2d") => void;
+
+  createSheet: (name: string) => string;
+  deleteSheet: (id: string) => void;
+  setCurrentSheet: (id: string | null) => void;
+  renameSheet: (id: string, name: string) => void;
+
+  insertView: (sheetId: string, viewPreset: ViewPreset) => string;
+  deleteView: (sheetId: string, viewId: string) => void;
+  moveView: (sheetId: string, viewId: string, x: number, y: number) => void;
+  resizeView: (
+    sheetId: string,
+    viewId: string,
+    width: number,
+    height: number
+  ) => void;
+  updateView: (
+    sheetId: string,
+    viewId: string,
+    patch: Partial<Pick<ViewInstance, "viewPreset" | "renderMode" | "label">>
+  ) => void;
+  setActiveView: (viewId: string | null) => void;
+
+  setViewPartState: (
+    sheetId: string,
+    viewId: string,
     partId: string,
     patch: Partial<PartStepState>
   ) => void;
-  exitPlanMode: () => void;
 
   setArrowToolActive: (active: boolean) => void;
-  addArrow: (planId: string, stepId: string, from: Vec3, to: Vec3, color?: string) => void;
-  deleteArrow: (planId: string, stepId: string, arrowId: string) => void;
+  addArrowToView: (
+    sheetId: string,
+    viewId: string,
+    from: Vec3,
+    to: Vec3,
+    color?: string
+  ) => void;
+  deleteArrowFromView: (sheetId: string, viewId: string, arrowId: string) => void;
 }
 
 export const useAssemblyStore = create<AssemblyState>((set, get) => ({
@@ -73,14 +105,15 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
   poses: {},
   selectedPartId: null,
 
-  plans: {},
-  planOrder: [],
-  currentPlanId: null,
-  currentStepIndex: 0,
-
   viewPreset: "iso",
   renderMode: "shaded",
-  isPlanMode: false,
+
+  tab: "3d",
+
+  sheets: {},
+  sheetOrder: [],
+  currentSheetId: null,
+  activeViewId: null,
   arrowToolActive: false,
 
   addParts: (parts) =>
@@ -117,159 +150,171 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
   setViewPreset: (v) => set({ viewPreset: v }),
   setRenderMode: (m) => set({ renderMode: m }),
 
-  createPlan: (name) => {
-    const id = nextId("plan");
-    const plan: Plan = { id, name, steps: [] };
+  setTab: (tab) => set({ tab }),
+
+  createSheet: (name) => {
+    const id = nextId("sheet");
+    const sheet: Sheet = { id, name, views: [] };
     set((s) => ({
-      plans: { ...s.plans, [id]: plan },
-      planOrder: [...s.planOrder, id],
-      currentPlanId: id,
+      sheets: { ...s.sheets, [id]: sheet },
+      sheetOrder: [...s.sheetOrder, id],
+      currentSheetId: id,
+      activeViewId: null,
     }));
     return id;
   },
 
-  deletePlan: (id) =>
+  deleteSheet: (id) =>
     set((s) => {
-      const plans = { ...s.plans };
-      delete plans[id];
+      const sheets = { ...s.sheets };
+      delete sheets[id];
+      const sheetOrder = s.sheetOrder.filter((sid) => sid !== id);
+      const wasCurrent = s.currentSheetId === id;
       return {
-        plans,
-        planOrder: s.planOrder.filter((p) => p !== id),
-        currentPlanId: s.currentPlanId === id ? null : s.currentPlanId,
-        isPlanMode: s.currentPlanId === id ? false : s.isPlanMode,
+        sheets,
+        sheetOrder,
+        currentSheetId: wasCurrent
+          ? sheetOrder[0] ?? null
+          : s.currentSheetId,
+        activeViewId: wasCurrent ? null : s.activeViewId,
       };
     }),
 
-  setCurrentPlan: (id) => set({ currentPlanId: id, currentStepIndex: 0 }),
+  setCurrentSheet: (id) => set({ currentSheetId: id, activeViewId: null }),
 
-  addStep: (planId, fromCurrentAssembly = true) => {
+  renameSheet: (id, name) =>
+    set((s) => {
+      const sheet = s.sheets[id];
+      if (!sheet) return {};
+      return { sheets: { ...s.sheets, [id]: { ...sheet, name } } };
+    }),
+
+  insertView: (sheetId, viewPreset) => {
     const s = get();
-    const plan = s.plans[planId];
-    if (!plan) return "";
-    const id = nextId("step");
+    const sheet = s.sheets[sheetId];
+    if (!sheet) return "";
+    const id = nextId("view");
     const partStates: Record<string, PartStepState> = {};
     for (const pid of s.partOrder) {
       partStates[pid] = {
         visible: s.parts[pid].visible,
-        pose: fromCurrentAssembly ? s.poses[pid] : undefined,
+        pose: s.poses[pid],
       };
     }
-    const step: PlanStep = {
+    const insertIndex = sheet.views.length;
+    const view: ViewInstance = {
       id,
-      name: `Paso ${plan.steps.length + 1}`,
-      viewPreset: s.viewPreset,
-      renderMode: s.renderMode,
+      label: `Vista ${VIEW_PRESET_LABEL[viewPreset]} ${insertIndex + 1}`,
+      x: 24 + insertIndex * VIEW_INSERT_OFFSET,
+      y: 24 + insertIndex * VIEW_INSERT_OFFSET,
+      width: DEFAULT_VIEW_SIZE.width,
+      height: DEFAULT_VIEW_SIZE.height,
+      viewPreset,
+      renderMode: "shaded",
       partStates,
       arrows: [],
     };
     set((st) => ({
-      plans: {
-        ...st.plans,
-        [planId]: { ...plan, steps: [...plan.steps, step] },
+      sheets: {
+        ...st.sheets,
+        [sheetId]: { ...sheet, views: [...sheet.views, view] },
       },
-      currentStepIndex: plan.steps.length,
-      isPlanMode: true,
-      currentPlanId: planId,
+      activeViewId: id,
     }));
     return id;
   },
 
-  deleteStep: (planId, stepId) =>
+  deleteView: (sheetId, viewId) =>
     set((s) => {
-      const plan = s.plans[planId];
-      if (!plan) return {};
-      const steps = plan.steps.filter((st) => st.id !== stepId);
-      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.filter((v) => v.id !== viewId);
+      return {
+        sheets: { ...s.sheets, [sheetId]: { ...sheet, views } },
+        activeViewId: s.activeViewId === viewId ? null : s.activeViewId,
+      };
     }),
 
-  duplicateStep: (planId, stepId) => {
-    const s = get();
-    const plan = s.plans[planId];
-    if (!plan) return "";
-    const src = plan.steps.find((st) => st.id === stepId);
-    if (!src) return "";
-    const id = nextId("step");
-    const copy: PlanStep = {
-      ...src,
-      id,
-      name: `${src.name} (copia)`,
-      partStates: JSON.parse(JSON.stringify(src.partStates)),
-      arrows: src.arrows.map((a) => ({ ...a, id: nextId("arrow") })),
-    };
-    const idx = plan.steps.findIndex((st) => st.id === stepId);
-    const steps = [...plan.steps];
-    steps.splice(idx + 1, 0, copy);
-    set({ plans: { ...s.plans, [planId]: { ...plan, steps } } });
-    return id;
-  },
-
-  goToStep: (index) => set({ currentStepIndex: index, isPlanMode: true }),
-
-  updateStep: (planId, stepId, patch) =>
+  moveView: (sheetId, viewId, x, y) =>
     set((s) => {
-      const plan = s.plans[planId];
-      if (!plan) return {};
-      const steps = plan.steps.map((st) =>
-        st.id === stepId ? { ...st, ...patch } : st
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.map((v) =>
+        v.id === viewId ? { ...v, x, y } : v
       );
-      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
     }),
 
-  setPartStepState: (planId, stepId, partId, patch) =>
+  resizeView: (sheetId, viewId, width, height) =>
     set((s) => {
-      const plan = s.plans[planId];
-      if (!plan) return {};
-      const steps = plan.steps.map((st) => {
-        if (st.id !== stepId) return st;
-        const existing: PartStepState = st.partStates[partId] ?? {
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.map((v) =>
+        v.id === viewId
+          ? { ...v, width: Math.max(120, width), height: Math.max(90, height) }
+          : v
+      );
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
+    }),
+
+  updateView: (sheetId, viewId, patch) =>
+    set((s) => {
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.map((v) =>
+        v.id === viewId ? { ...v, ...patch } : v
+      );
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
+    }),
+
+  setActiveView: (viewId) => set({ activeViewId: viewId }),
+
+  setViewPartState: (sheetId, viewId, partId, patch) =>
+    set((s) => {
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.map((v) => {
+        if (v.id !== viewId) return v;
+        const existing: PartStepState = v.partStates[partId] ?? {
           visible: true,
         };
         return {
-          ...st,
-          partStates: {
-            ...st.partStates,
-            [partId]: { ...existing, ...patch },
-          },
+          ...v,
+          partStates: { ...v.partStates, [partId]: { ...existing, ...patch } },
         };
       });
-      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
     }),
-
-  exitPlanMode: () => set({ isPlanMode: false }),
 
   setArrowToolActive: (active) => set({ arrowToolActive: active }),
 
-  addArrow: (planId, stepId, from, to, color = "#ff2d55") =>
+  addArrowToView: (sheetId, viewId, from, to, color = "#ff2d55") =>
     set((s) => {
-      const plan = s.plans[planId];
-      if (!plan) return {};
-      const steps = plan.steps.map((st) =>
-        st.id === stepId
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.map((v) =>
+        v.id === viewId
           ? {
-              ...st,
+              ...v,
               arrows: [
-                ...st.arrows,
+                ...v.arrows,
                 { id: nextId("arrow"), from, to, color } as Arrow,
               ],
             }
-          : st
+          : v
       );
-      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
     }),
 
-  deleteArrow: (planId, stepId, arrowId) =>
+  deleteArrowFromView: (sheetId, viewId, arrowId) =>
     set((s) => {
-      const plan = s.plans[planId];
-      if (!plan) return {};
-      const steps = plan.steps.map((st) =>
-        st.id === stepId
-          ? { ...st, arrows: st.arrows.filter((a) => a.id !== arrowId) }
-          : st
+      const sheet = s.sheets[sheetId];
+      if (!sheet) return {};
+      const views = sheet.views.map((v) =>
+        v.id === viewId
+          ? { ...v, arrows: v.arrows.filter((a) => a.id !== arrowId) }
+          : v
       );
-      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+      return { sheets: { ...s.sheets, [sheetId]: { ...sheet, views } } };
     }),
 }));
-
-export function defaultPartStepState(): PartStepState {
-  return { visible: true, pose: identityPose() };
-}
