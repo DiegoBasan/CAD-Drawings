@@ -14,10 +14,14 @@ export default function PlansPanel() {
   const duplicateStep = useAssemblyStore((s) => s.duplicateStep);
   const goToStep = useAssemblyStore((s) => s.goToStep);
   const isPlanMode = useAssemblyStore((s) => s.isPlanMode);
+  const arrowToolActive = useAssemblyStore((s) => s.arrowToolActive);
+  const setArrowToolActive = useAssemblyStore((s) => s.setArrowToolActive);
+  const deleteArrow = useAssemblyStore((s) => s.deleteArrow);
 
   const [newPlanName, setNewPlanName] = useState("Guia de ensamble");
 
   const plan = currentPlanId ? plans[currentPlanId] : null;
+  const step = plan && isPlanMode ? plan.steps[currentStepIndex] : null;
 
   return (
     <div className="flex flex-col border-t border-neutral-800">
@@ -104,6 +108,45 @@ export default function PlansPanel() {
             <div className="p-2 text-neutral-500 text-xs">
               Sin pasos todavia. Mueve las piezas a la posicion que quieras
               mostrar y presiona "Agregar paso".
+            </div>
+          )}
+
+          {step && (
+            <div className="p-2 border-t border-neutral-800">
+              <button
+                className={`w-full px-2 py-1 rounded text-sm ${
+                  arrowToolActive
+                    ? "bg-rose-600 hover:bg-rose-500"
+                    : "bg-neutral-800 hover:bg-neutral-700"
+                }`}
+                onClick={() => setArrowToolActive(!arrowToolActive)}
+              >
+                {arrowToolActive
+                  ? "Haz clic en el origen y luego el destino de la flecha..."
+                  : "+ Agregar flecha (click, click)"}
+              </button>
+              {step.arrows.length > 0 && (
+                <ul className="mt-2 space-y-1">
+                  {step.arrows.map((a, i) => (
+                    <li
+                      key={a.id}
+                      className="flex items-center gap-2 text-xs text-neutral-400"
+                    >
+                      <span
+                        className="w-3 h-3 rounded-full inline-block"
+                        style={{ background: a.color }}
+                      />
+                      <span className="flex-1">Flecha {i + 1}</span>
+                      <button
+                        className="text-red-400 hover:text-red-300"
+                        onClick={() => deleteArrow(plan.id, step.id, a.id)}
+                      >
+                        x
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
         </div>

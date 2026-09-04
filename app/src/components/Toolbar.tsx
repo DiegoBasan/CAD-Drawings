@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useAssemblyStore } from "../assembly/store";
 import { loadModelFile } from "../importers/loadModel";
 import type { RenderMode, ViewPreset } from "../types/domain";
@@ -22,6 +22,7 @@ const RENDER_MODES: { id: RenderMode; label: string }[] = [
 
 export default function Toolbar() {
   const inputRef = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
   const addParts = useAssemblyStore((s) => s.addParts);
   const viewPreset = useAssemblyStore((s) => s.viewPreset);
   const renderMode = useAssemblyStore((s) => s.renderMode);
@@ -41,13 +42,19 @@ export default function Toolbar() {
 
   async function onFiles(files: FileList | null) {
     if (!files) return;
-    for (const file of Array.from(files)) {
-      try {
-        const parts = await loadModelFile(file);
-        addParts(parts);
-      } catch (err) {
-        alert((err as Error).message);
+    setImporting(true);
+    try {
+      for (const file of Array.from(files)) {
+        try {
+          const parts = await loadModelFile(file);
+          addParts(parts);
+        } catch (err) {
+          alert((err as Error).message);
+        }
       }
+    } finally {
+      setImporting(false);
+      if (inputRef.current) inputRef.current.value = "";
     }
   }
 
@@ -73,16 +80,17 @@ export default function Toolbar() {
   return (
     <div className="flex flex-wrap items-center gap-2 bg-neutral-900 border-b border-neutral-700 px-3 py-2 text-sm text-neutral-200">
       <button
-        className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500"
+        className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-500 disabled:opacity-50"
         onClick={() => inputRef.current?.click()}
+        disabled={importing}
       >
-        Importar CAD
+        {importing ? "Importando..." : "Importar CAD (STEP/STL/OBJ/glTF)"}
       </button>
       <input
         ref={inputRef}
         type="file"
         multiple
-        accept=".stl,.obj,.glb,.gltf"
+        accept=".step,.stp,.iges,.igs,.stl,.obj,.glb,.gltf"
         className="hidden"
         onChange={(e) => onFiles(e.target.files)}
       />

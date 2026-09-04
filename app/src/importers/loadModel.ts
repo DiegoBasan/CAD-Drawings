@@ -4,6 +4,8 @@ import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import { OBJLoader } from "three/examples/jsm/loaders/OBJLoader.js";
 import type { Part, PartGeometry } from "../types/domain";
 import { nextId } from "../assembly/store";
+import { importStepFile } from "../occ/stepImport";
+import { tessellateBodies } from "../occ/tessellate";
 
 function toPartGeometry(geom: THREE.BufferGeometry): PartGeometry {
   const g = geom.index ? geom : mergeVerticesFallback(geom);
@@ -65,6 +67,12 @@ function collectMeshes(root: THREE.Object3D): THREE.Mesh[] {
 
 export async function loadModelFile(file: File): Promise<Part[]> {
   const ext = file.name.split(".").pop()?.toLowerCase();
+
+  if (ext === "step" || ext === "stp" || ext === "iges" || ext === "igs") {
+    const { bodies, oc } = await importStepFile(file);
+    return tessellateBodies(oc, bodies);
+  }
+
   const buffer = await file.arrayBuffer();
 
   if (ext === "stl") {
@@ -97,7 +105,6 @@ export async function loadModelFile(file: File): Promise<Part[]> {
   }
 
   throw new Error(
-    `Formato .${ext} no soportado todavia. Usa STL, OBJ o glTF/GLB. ` +
-      `(Importacion STEP/IGES via OpenCASCADE WASM esta planeada, ver README.)`
+    `Formato .${ext} no soportado. Usa STEP/STP, IGES/IGS, STL, OBJ o glTF/GLB.`
   );
 }

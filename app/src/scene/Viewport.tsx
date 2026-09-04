@@ -79,6 +79,8 @@ export default function Viewport() {
   } | null>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const rafRef = useRef<number>(0);
+  const arrowGroupRef = useRef<THREE.Group | null>(null);
+  const pendingArrowStartRef = useRef<THREE.Vector3 | null>(null);
 
   // --- one-time scene setup ---
   useEffect(() => {
@@ -119,6 +121,10 @@ export default function Viewport() {
     const grid = new THREE.GridHelper(20, 20, 0x3a4048, 0x2a2f36);
     grid.rotation.x = Math.PI / 2;
     scene.add(grid);
+
+    const arrowGroup = new THREE.Group();
+    scene.add(arrowGroup);
+    arrowGroupRef.current = arrowGroup;
 
     const controls = new OrbitControls(camera, renderer.domElement);
     controls.target.set(0, 0, 0);
@@ -172,11 +178,57 @@ export default function Viewport() {
       return idByMesh.get(hits[0].object as THREE.Mesh) ?? null;
     }
 
+    function pickPoint(ndc: THREE.Vector2): THREE.Vector3 | null {
+      const raycaster = raycasterRef.current;
+      raycaster.setFromCamera(ndc, camera);
+      const meshes: THREE.Mesh[] = [];
+      visualsRef.current.forEach((v) => {
+        if (v.mesh.visible) meshes.push(v.mesh);
+      });
+      const hits = raycaster.intersectObjects(meshes, false);
+      if (hits.length > 0) return hits[0].point.clone();
+      const fallbackPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+      const p = new THREE.Vector3();
+      return raycaster.ray.intersectPlane(fallbackPlane, p) ? p : null;
+    }
+
     function onPointerDown(e: PointerEvent) {
       if (e.button !== 0) return;
       const ndc = toNDC(e);
+
+      const {
+        arrowToolActive,
+        isPlanMode,
+        currentPlanId,
+        currentStepIndex,
+        plans,
+        addArrow,
+      } = useAssemblyStore.getState();
+
+      if (arrowToolActive && isPlanMode && currentPlanId) {
+        const point = pickPoint(ndc);
+        if (!point) return;
+        const start = pendingArrowStartRef.current;
+        if (!start) {
+          pendingArrowStartRef.current = point;
+        } else {
+          const step = plans[currentPlanId]?.steps[currentStepIndex];
+          if (step) {
+            addArrow(
+              currentPlanId,
+              step.id,
+              [start.x, start.y, start.z],
+              [point.x, point.y, point.z]
+            );
+          }
+          pendingArrowStartRef.current = null;
+          useAssemblyStore.getState().setArrowToolActive(false);
+        }
+        return;
+      }
+
       const id = pickPartId(ndc);
-      const { selectPart, isPlanMode } = useAssemblyStore.getState();
+      const { selectPart } = useAssemblyStore.getState();
       selectPart(id);
       if (!id || isPlanMode) return; // no drag-editing while viewing a locked plan step
 
@@ -354,6 +406,30 @@ export default function Viewport() {
             visual.mesh,
             visual.edges
           );
+        }
+      }
+
+      const arrowGroup = arrowGroupRef.current;
+      if (arrowGroup) {
+        while (arrowGroup.children.length) {
+          const child = arrowGroup.children.pop()!;
+          if (child instanceof THREE.ArrowHelper) child.dispose();
+        }
+        for (const arrow of step?.arrows ?? []) {
+          const from = new THREE.Vector3(...arrow.from);
+          const to = new THREE.Vector3(...arrow.to);
+          const dir = to.clone().sub(from);
+          const length = dir.length() || 0.001;
+          dir.normalize();
+          const helper = new THREE.ArrowHelper(
+            dir,
+            from,
+            length,
+            new THREE.Color(arrow.color).getHex(),
+            Math.min(0.3, length * 0.3),
+            Math.min(0.18, length * 0.2)
+          );
+          arrowGroup.add(helper);
         }
       }
 

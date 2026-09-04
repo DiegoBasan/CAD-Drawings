@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  Arrow,
   Part,
   Plan,
   PlanStep,
@@ -7,6 +8,7 @@ import type {
   RenderMode,
   ViewPreset,
   PartStepState,
+  Vec3,
 } from "../types/domain";
 import { identityPose } from "../types/domain";
 
@@ -31,6 +33,8 @@ interface AssemblyState {
   renderMode: RenderMode;
   /** when set, we are looking at a plan step instead of free assembly editing */
   isPlanMode: boolean;
+  /** when true, next two clicks in the viewport define a new arrow on the current step */
+  arrowToolActive: boolean;
 
   addParts: (parts: Part[]) => void;
   clearParts: () => void;
@@ -57,6 +61,10 @@ interface AssemblyState {
     patch: Partial<PartStepState>
   ) => void;
   exitPlanMode: () => void;
+
+  setArrowToolActive: (active: boolean) => void;
+  addArrow: (planId: string, stepId: string, from: Vec3, to: Vec3, color?: string) => void;
+  deleteArrow: (planId: string, stepId: string, arrowId: string) => void;
 }
 
 export const useAssemblyStore = create<AssemblyState>((set, get) => ({
@@ -73,6 +81,7 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
   viewPreset: "iso",
   renderMode: "shaded",
   isPlanMode: false,
+  arrowToolActive: false,
 
   addParts: (parts) =>
     set((s) => {
@@ -227,6 +236,38 @@ export const useAssemblyStore = create<AssemblyState>((set, get) => ({
     }),
 
   exitPlanMode: () => set({ isPlanMode: false }),
+
+  setArrowToolActive: (active) => set({ arrowToolActive: active }),
+
+  addArrow: (planId, stepId, from, to, color = "#ff2d55") =>
+    set((s) => {
+      const plan = s.plans[planId];
+      if (!plan) return {};
+      const steps = plan.steps.map((st) =>
+        st.id === stepId
+          ? {
+              ...st,
+              arrows: [
+                ...st.arrows,
+                { id: nextId("arrow"), from, to, color } as Arrow,
+              ],
+            }
+          : st
+      );
+      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+    }),
+
+  deleteArrow: (planId, stepId, arrowId) =>
+    set((s) => {
+      const plan = s.plans[planId];
+      if (!plan) return {};
+      const steps = plan.steps.map((st) =>
+        st.id === stepId
+          ? { ...st, arrows: st.arrows.filter((a) => a.id !== arrowId) }
+          : st
+      );
+      return { plans: { ...s.plans, [planId]: { ...plan, steps } } };
+    }),
 }));
 
 export function defaultPartStepState(): PartStepState {
